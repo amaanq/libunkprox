@@ -1,3 +1,4 @@
 target/
 NDK/
 .cargo/
+src/.ip_addr
