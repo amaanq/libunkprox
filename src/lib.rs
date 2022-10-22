@@ -2,6 +2,7 @@
 extern crate log;
 extern crate android_logger;
 extern crate jni;
+extern crate socket2;
 
 /// Expose the JNI interface for android below
 #[cfg(target_os = "android")]
@@ -18,11 +19,14 @@ pub mod unkprox {
         sys::jstring,
         JNIEnv,
     };
+    use lazy_static::lazy_static;
     use log::Level;
     use socket2::{Domain, Socket, Type};
 
-    #[no_mangle]
-    static mut SOCK: i32 = 0;
+    lazy_static! {
+        #[no_mangle]
+        static ref SOCK_ADDR: Socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+    }
 
     #[no_mangle]
     static mut LOCKER: libc::pthread_mutex_t = libc::PTHREAD_MUTEX_INITIALIZER;
@@ -56,7 +60,7 @@ pub mod unkprox {
     #[no_mangle]
     pub unsafe extern "C" fn sendtoServer(data: *mut c_void, size: usize) -> isize {
         libc::pthread_mutex_lock(&mut LOCKER);
-        let length_sent = libc::send(SOCK, data, size, 0);
+        let length_sent = libc::send(SOCK_ADDR.as_raw_fd(), data, size, 0);
         libc::pthread_mutex_unlock(&mut LOCKER);
         length_sent
     }
@@ -69,7 +73,7 @@ pub mod unkprox {
     #[no_mangle]
     pub unsafe extern "C" fn recvfromServer(data: *mut c_void, size: usize) -> isize {
         libc::pthread_mutex_lock(&mut LOCKER);
-        let length_recvd = libc::recv(SOCK, data, size, 0);
+        let length_recvd = libc::recv(SOCK_ADDR.as_raw_fd(), data, size, 0);
         libc::pthread_mutex_unlock(&mut LOCKER);
         length_recvd
     }
@@ -92,7 +96,12 @@ pub mod unkprox {
                 libc::pthread_mutex_lock(&mut LOCKER);
 
                 // recv from SOCK
-                let length_recvd = libc::recv(SOCK, data.as_mut_ptr().cast::<libc::c_void>(), 1, 0);
+                let length_recvd = libc::recv(
+                    SOCK_ADDR.as_raw_fd(),
+                    data.as_mut_ptr().cast::<libc::c_void>(),
+                    1,
+                    0,
+                );
                 if length_recvd > 0 {
                     info!("Unk Proxy - Message was received.");
                     messageReceived(length_recvd as usize);
@@ -112,12 +121,14 @@ pub mod unkprox {
         let mut thread_id: libc::pthread_t = 0;
         info!("Unk Proxy - Creating thread");
 
-        libc::pthread_create(
+        let retval = libc::pthread_create(
             &mut thread_id,
             std::ptr::null(),
             clientAwaitMessages,
             std::ptr::null_mut(),
-        )
+        );
+        info!("Unk Proxy - Thread created {}", retval);
+        retval
     }
 
     /// # Safety
@@ -151,11 +162,29 @@ pub mod unkprox {
     pub unsafe extern "C" fn loadStart() -> i32 {
         info!("Unk Proxy - Starting LoadStart");
 
-        // use socket2
-        let addr: SocketAddr = include_str!(".ip_addr").parse().unwrap();
-        let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
-        socket.connect(&addr.into()).unwrap();
-        SOCK = socket.as_raw_fd();
+        let addr_str = include_str!(".ip_addr").trim();
+        info!("Unk Proxy - Address: {}", addr_str);
+
+        let addr: SocketAddr = match addr_str.parse() {
+            Ok(addr) => addr,
+            Err(e) => {
+                error!("Unk Proxy - Failed to parse address: {}", e);
+                return -1;
+            }
+        };
+
+        // let socket = match Socket::new(Domain::IPV4, Type::STREAM, None) {
+        //     Ok(socket) => socket,
+        //     Err(e) => {
+        //         error!("Unk Proxy - Failed to create socket: {}", e);
+        //         return -1;
+        //     }
+        // };
+
+        if let Err(e) = SOCK_ADDR.connect(&addr.into()) {
+            error!("Unk Proxy - Failed to connect to server: {}", e);
+            return -1;
+        };
 
         0
     }
@@ -164,7 +193,7 @@ pub mod unkprox {
     ///
     /// # Safety
     ///
-    /// Calls [`libc::pthread_mutex_init`] and [`unkprox::loadStart`]
+    /// Calls [`libc::pthread_mutex_init`] and [`self::loadStart`]
     #[no_mangle]
     pub unsafe extern "C" fn init(_: c_void) -> i32 {
         android_logger::init_once(
@@ -190,8 +219,8 @@ pub mod unkprox {
 
         info!("Unk Proxy - Mutexes Initialized");
         info!("Unk Proxy - Starting proxy connection...\n");
-        self::loadStart();
-        0
+
+        self::loadStart()
     }
 
     // #[no_mangle]
