@@ -49,7 +49,7 @@ pub mod unkprox {
         let output = env
             .new_string(world_ptr.to_str().unwrap())
             .expect("Couldn't create java string!");
-        output.into_inner()
+        **output
     }
 
     /// Sends `size` bytes to the server from the `data` buffer
@@ -71,20 +71,25 @@ pub mod unkprox {
     ///
     /// Calls [`libc::pthread_mutex_lock`], [`libc::pthread_mutex_unlock`], and [`libc::recv`].
     #[no_mangle]
-    pub unsafe extern "C" fn recvfromServer(data: *mut c_void, size: usize) -> isize {
+    pub unsafe extern "C" fn recvfromServer(data: *mut c_void, size: i32) -> i32 {
+        info!("Receiving from server, locking LOCKER");
         libc::pthread_mutex_lock(&mut LOCKER);
-        let length_recvd = libc::recv(SOCK_ADDR.as_raw_fd(), data, size, 0);
+        info!("Receiving from server, locked LOCKER");
+        let length_recvd = libc::recv(SOCK_ADDR.as_raw_fd(), data, size as usize, libc::MSG_WAITALL);
+        info!("Receiving from server, unlocking LOCKER");
         libc::pthread_mutex_unlock(&mut LOCKER);
-        length_recvd
+        info!("Received from server, unlocked LOCKER");
+        length_recvd as i32
     }
 
     #[no_mangle]
-    pub const extern "C" fn messageReceived(_: usize) -> i32 {
+    pub extern "C" fn messageReceived(_: i32) -> i32 {
+        info!("Inside messageReceived in Rust");
         1
     }
 
     #[no_mangle]
-    pub extern "C" fn clientAwaitMessages(_null: *mut c_void) -> *mut c_void {
+    pub extern "C" fn clientAwaitMessages(_: *mut c_void) -> *mut c_void {
         info!("Unk Proxy - Await messages");
         loop {
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -93,21 +98,21 @@ pub mod unkprox {
 
             unsafe {
                 libc::pthread_mutex_lock(&mut SUSPENDER);
-                libc::pthread_mutex_lock(&mut LOCKER);
+                // libc::pthread_mutex_lock(&mut LOCKER);
 
                 // recv from SOCK
                 let length_recvd = libc::recv(
                     SOCK_ADDR.as_raw_fd(),
                     data.as_mut_ptr().cast::<libc::c_void>(),
                     1,
-                    0,
+                    libc::MSG_DONTWAIT,
                 );
                 if length_recvd > 0 {
                     info!("Unk Proxy - Message was received.");
-                    messageReceived(length_recvd as usize);
+                    messageReceived(length_recvd as i32);
                 }
 
-                libc::pthread_mutex_unlock(&mut LOCKER);
+                // libc::pthread_mutex_unlock(&mut LOCKER);
                 libc::pthread_mutex_unlock(&mut SUSPENDER);
             }
         }
@@ -127,7 +132,13 @@ pub mod unkprox {
             clientAwaitMessages,
             std::ptr::null_mut(),
         );
-        info!("Unk Proxy - Thread created {}", retval);
+
+        if retval != 0 {
+            error!("Unk Proxy - Failed to create thread");
+        } else {
+            info!("Unk Proxy - Thread created {}", retval);
+        }
+
         retval
     }
 
@@ -208,11 +219,11 @@ pub mod unkprox {
                 ),
         );
 
-        if libc::pthread_mutex_init(&mut LOCKER, std::ptr::null()) != 0 {
-            error!("Unk Proxy - Failed to init mutex");
-            return -1;
-        }
-        if libc::pthread_mutex_init(&mut SUSPENDER, std::ptr::null()) != 0 {
+        if (
+            libc::pthread_mutex_init(&mut LOCKER, std::ptr::null()),
+            libc::pthread_mutex_init(&mut SUSPENDER, std::ptr::null()),
+        ) != (0, 0)
+        {
             error!("Unk Proxy - Failed to init mutex");
             return -1;
         }
@@ -243,21 +254,21 @@ pub mod unkprox {
         let mut info = graphic::AndroidBitmapInfo::new();
         let raw_env = env.get_native_interface();
 
-        let bmp = bmp.into_inner();
+        // let bmp = bmp.into_inner();
 
         // Get bitmap info
-        graphic::bitmap_get_info(raw_env, bmp, &mut info);
+        graphic::bitmap_get_info(raw_env, *bmp, &mut info);
         let mut pixels = std::ptr::null_mut::<c_void>();
 
         // Lock the bitmap
-        graphic::bitmap_lock_pixels(raw_env, bmp, &mut pixels);
+        graphic::bitmap_lock_pixels(raw_env, *bmp, &mut pixels);
 
         // Get the pixels
         let pixels = pixels as *mut u8;
         // let pixels = std::slice::from_raw_parts_mut(pixels, (info.width * info.height) as usize);
 
         // Unlock the bitmap
-        graphic::bitmap_unlock_pixels(raw_env, bmp);
+        graphic::bitmap_unlock_pixels(raw_env, *bmp);
 
         // Return the pixels
         pixels

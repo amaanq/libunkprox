@@ -10,13 +10,29 @@ cstr_core = { version = "0.2.6", features = ["use_libc"] }
 lazy_static = "1.4.0"
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.11"
-image = "0.22.0"
-jni = { version = "0.5", default-features = false }
+image = "0.24.4"
+jni = { version = "0.20.0", default-features = false }
 libc = "0.2.135"
 log = "0.4.17"
-num-complex = "0.2"
+num-complex = "0.4.2"
 socket2 = { version = "0.4.7", features = ["all"] }
 
 [lib]
 name = "unkprox"
 crate-type = ["dylib"]
+
+[profile.dev]
+opt-level = 0
+debug = true
+debug-assertions = true
+overflow-checks = true
+lto = false
+panic = 'unwind'
+incremental = true # Enable incremental compilation.
+codegen-units = 256
+rpath = false
+
+[profile.release]
+lto = true # Link-time optimization.
+opt-level = "s" # Optimize for speed.
+codegen-units = 1 # Maximum size reduction optimizations.
